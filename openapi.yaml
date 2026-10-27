@@ -1,0 +1,309 @@
+openapi: 3.0.3
+info:
+  title: Banking Ledger API
+  version: 1.0.0
+  description: |
+    Accounts and transactions ledger API with atomic balance updates,
+    immutable transactions, pagination, and money transfers.
+servers:
+  - url: http://localhost:3000
+    description: Local
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /accounts:
+    post:
+      summary: Create account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: Alice
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /accounts/{id}:
+    get:
+      summary: Get account by ID
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+  /accounts/{id}/transactions:
+    post:
+      summary: Create credit or debit transaction
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransaction'
+      responses:
+        '201':
+          description: Transaction created and balance updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction:
+                    $ref: '#/components/schemas/Transaction'
+                  balance:
+                    type: number
+                    example: 100
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+        '409':
+          $ref: '#/components/responses/DuplicateTransaction'
+        '422':
+          $ref: '#/components/responses/InsufficientBalance'
+    get:
+      summary: List transactions (latest first, paginated)
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTransactions'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+  /transfers:
+    post:
+      summary: Transfer money between accounts (atomic)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransfer'
+      responses:
+        '201':
+          description: Transfer completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResult'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+        '409':
+          $ref: '#/components/responses/DuplicateTransaction'
+        '422':
+          $ref: '#/components/responses/InsufficientBalance'
+components:
+  parameters:
+    AccountId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        balance:
+          type: number
+          example: 100
+        created_at:
+          type: string
+          format: date-time
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [credit, debit]
+        amount:
+          type: number
+        description:
+          type: string
+          nullable: true
+        reference_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateTransaction:
+      type: object
+      required: [type, amount, reference_id]
+      properties:
+        type:
+          type: string
+          enum: [credit, debit]
+        amount:
+          type: number
+          exclusiveMinimum: 0
+          example: 50
+        description:
+          type: string
+        reference_id:
+          type: string
+          example: txn-001
+    PaginatedTransactions:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            limit:
+              type: integer
+            total_records:
+              type: integer
+            total_pages:
+              type: integer
+    CreateTransfer:
+      type: object
+      required: [from_account_id, to_account_id, amount, reference_id]
+      properties:
+        from_account_id:
+          type: string
+          format: uuid
+        to_account_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          exclusiveMinimum: 0
+        reference_id:
+          type: string
+        description:
+          type: string
+    TransferResult:
+      type: object
+      properties:
+        amount:
+          type: number
+        reference_id:
+          type: string
+        from_account:
+          $ref: '#/components/schemas/Account'
+        to_account:
+          $ref: '#/components/schemas/Account'
+        debit_transaction:
+          $ref: '#/components/schemas/Transaction'
+        credit_transaction:
+          $ref: '#/components/schemas/Transaction'
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+  responses:
+    ValidationError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Amount must be greater than 0
+    AccountNotFound:
+      description: Account not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: ACCOUNT_NOT_FOUND
+              message: Account ... was not found
+    InsufficientBalance:
+      description: Debit/transfer amount exceeds balance
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: INSUFFICIENT_BALANCE
+              message: "Insufficient balance. Available: 20, requested: 30"
+    DuplicateTransaction:
+      description: Duplicate reference_id for account
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: DUPLICATE_TRANSACTION
+              message: "A transaction with this reference_id already exists for this account"
